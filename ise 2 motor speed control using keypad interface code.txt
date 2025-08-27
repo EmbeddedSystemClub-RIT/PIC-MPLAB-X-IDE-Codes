@@ -1,0 +1,371 @@
+// PIC18F4520 Configuration Bit Settings
+
+// 'C' source line config statements
+
+// CONFIG1H
+#pragma config OSC = INTIO67    // Oscillator Selection bits (Internal oscillator block, port function on RA6 and RA7)
+#pragma config FCMEN = OFF      // Fail-Safe Clock Monitor Enable bit (Fail-Safe Clock Monitor disabled)
+#pragma config IESO = OFF       // Internal/External Oscillator Switchover bit (Oscillator Switchover mode disabled)
+
+// CONFIG2L
+#pragma config PWRT = OFF       // Power-up Timer Enable bit (PWRT disabled)
+#pragma config BOREN = SBORDIS  // Brown-out Reset Enable bits (Brown-out Reset enabled in hardware only (SBOREN is disabled))
+#pragma config BORV = 3         // Brown Out Reset Voltage bits (Minimum setting)
+
+// CONFIG2H
+#pragma config WDT = OFF        // Watchdog Timer Enable bit (WDT disabled (control is placed on the SWDTEN bit))
+#pragma config WDTPS = 32768    // Watchdog Timer Postscale Select bits (1:32768)
+
+// CONFIG3H
+#pragma config CCP2MX = PORTC   // CCP2 MUX bit (CCP2 input/output is multiplexed with RC1)
+#pragma config PBADEN = OFF     // PORTB A/D Enable bit (PORTB<4:0> pins are configured as digital I/O on Reset)
+#pragma config LPT1OSC = OFF    // Low-Power Timer1 Oscillator Enable bit (Timer1 configured for higher power operation)
+#pragma config MCLRE = ON      // MCLR Pin Enable bit (RE3 input pin enabled; MCLR disabled)
+
+// CONFIG4L
+#pragma config STVREN = ON      // Stack Full/Underflow Reset Enable bit (Stack full/underflow will cause Reset)
+#pragma config LVP = OFF        // Single-Supply ICSP Enable bit (Single-Supply ICSP disabled)
+#pragma config XINST = OFF      // Extended Instruction Set Enable bit (Instruction set extension and Indexed Addressing mode disabled (Legacy mode))
+
+// CONFIG5L
+#pragma config CP0 = OFF        // Code Protection bit (Block 0 (000800-001FFFh) not code-protected)
+#pragma config CP1 = OFF        // Code Protection bit (Block 1 (002000-003FFFh) not code-protected)
+#pragma config CP2 = OFF        // Code Protection bit (Block 2 (004000-005FFFh) not code-protected)
+#pragma config CP3 = OFF        // Code Protection bit (Block 3 (006000-007FFFh) not code-protected)
+
+// CONFIG5H
+#pragma config CPB = OFF        // Boot Block Code Protection bit (Boot block (000000-0007FFh) not code-protected)
+#pragma config CPD = OFF        // Data EEPROM Code Protection bit (Data EEPROM not code-protected)
+
+// CONFIG6L
+#pragma config WRT0 = OFF       // Write Protection bit (Block 0 (000800-001FFFh) not write-protected)
+#pragma config WRT1 = OFF       // Write Protection bit (Block 1 (002000-003FFFh) not write-protected)
+#pragma config WRT2 = OFF       // Write Protection bit (Block 2 (004000-005FFFh) not write-protected)
+#pragma config WRT3 = OFF       // Write Protection bit (Block 3 (006000-007FFFh) not write-protected)
+
+// CONFIG6H
+#pragma config WRTC = OFF       // Configuration Register Write Protection bit (Configuration registers (300000-3000FFh) not write-protected)
+#pragma config WRTB = OFF       // Boot Block Write Protection bit (Boot block (000000-0007FFh) not write-protected)
+#pragma config WRTD = OFF       // Data EEPROM Write Protection bit (Data EEPROM not write-protected)
+
+// CONFIG7L
+#pragma config EBTR0 = OFF      // Table Read Protection bit (Block 0 (000800-001FFFh) not protected from table reads executed in other blocks)
+#pragma config EBTR1 = OFF      // Table Read Protection bit (Block 1 (002000-003FFFh) not protected from table reads executed in other blocks)
+#pragma config EBTR2 = OFF      // Table Read Protection bit (Block 2 (004000-005FFFh) not protected from table reads executed in other blocks)
+#pragma config EBTR3 = OFF      // Table Read Protection bit (Block 3 (006000-007FFFh) not protected from table reads executed in other blocks)
+
+// CONFIG7H
+#pragma config EBTRB = OFF      // Boot Block Table Read Protection bit (Boot block (000000-0007FFh) not protected from table reads executed in other blocks)
+
+// #pragma config statements should precede project file includes.
+// Use project enums instead of #define for ON and OFF.
+
+#include <xc.h>
+#include <stdlib.h>
+
+#define _XTAL_FREQ 4000000  // System clock frequency (4MHz)
+
+// LCD Configuration
+#define LCD_PORT PORTD
+#define LCD_TRIS TRISD
+#define RS PORTCbits.RC6
+#define EN PORTCbits.RC7
+#define RS_TRIS TRISCbits.TRISC6
+#define EN_TRIS TRISCbits.TRISC7
+
+// Keypad Configuration
+#define ROW1 LATBbits.LATB0
+#define ROW2 LATBbits.LATB1
+#define ROW3 LATBbits.LATB2
+#define ROW4 LATBbits.LATB3
+#define COL1 PORTBbits.RB4
+#define COL2 PORTBbits.RB5
+#define COL3 PORTBbits.RB6
+#define COL4 PORTBbits.RB7
+
+// PWM and Timer Configuration
+#define PWM_PIN TRISCbits.TRISC2  // CCP1 on RC2
+
+volatile unsigned int duty_cycle = 0;
+
+// Function Prototypes
+void init_keypad(void);
+void init_interrupt(void);
+void init_lcd(void);
+void init_pwm(void);
+void lcd_command(unsigned char cmd);
+void lcd_data(unsigned char data);
+void lcd_print(const char *str);
+unsigned char scan_keypad(void);
+void update_pwm(unsigned int duty);
+void update_display(unsigned int percentage);
+void __interrupt() isr(void);
+
+void main(void) {
+    OSCCON = 0xEF;  // Set internal oscillator to 8MHz
+    
+    // Initialize all modules
+    init_keypad();
+    init_lcd();
+    init_pwm();
+    init_interrupt();
+    
+    // Display initial message
+    lcd_command(0x01);  // Clear display
+    lcd_print("Motor Speed: 0%");
+    
+    // Set initial PWM to 0 (motor off)
+    update_pwm(0);
+
+    while (1) {
+        // Check for keypad input (polling method)
+        unsigned char key = scan_keypad();
+        
+        // Process numerical keys (0-9)
+        if (key >= '0' && key <= '9') {
+            // Calculate duty cycle: key '0' = 0%, '1' = 10%, '9' = 90%
+            unsigned int percentage = (key - '0') * 10;
+            
+            // Update duty cycle - direct mapping
+            duty_cycle = percentage;
+            
+            // Calculate 10-bit PWM value (0-1023)
+            unsigned int pwm_value = (percentage * 1023) / 100;
+            
+            // Update PWM
+            update_pwm(pwm_value);
+            
+            // Update LCD display
+            update_display(percentage);
+            
+            // Debounce delay
+            __delay_ms(300);
+        }
+        
+        // Handle special case for 100% (using '*' key)
+        if (key == '*') {
+            duty_cycle = 100;
+            
+            // Set to 100% PWM value
+            update_pwm(1023);
+            
+            // Update LCD display
+            update_display(100);
+            
+            // Debounce delay
+            __delay_ms(300);
+        }
+        
+        // Add a small delay to improve stability
+        __delay_ms(5);
+    }
+}
+
+// Update LCD display with the current percentage
+void update_display(unsigned int percentage) {
+    lcd_command(0x01);  // Clear display
+    lcd_print("Motor Speed: ");
+    
+    // Display percentage based on number of digits
+    if (percentage == 100) {
+        lcd_print("100%");
+    } else if (percentage >= 10) {
+        char tens = (char)((percentage / 10) + '0');
+        char ones = (char)((percentage % 10) + '0');
+        lcd_data(tens);
+        lcd_data(ones);
+        lcd_print("%");
+    } else {
+        char digit = (char)(percentage + '0');
+        lcd_data(digit);
+        lcd_print("%");
+    }
+}
+
+// PWM Initialization with 10-bit resolution
+void init_pwm(void) {
+    // Configure CCP1 for PWM operation
+    PWM_PIN = 0;  // Set RC2 as output for CCP1/PWM
+    
+    // Configure Timer2 for PWM
+    T2CON = 0x04;    // Timer2 On, Prescaler 1:1
+    PR2 = 255;      // Set period register for 10-bit PWM
+    
+    // Configure CCP1 for PWM mode
+    CCP1CON = 0x0C;  // PWM mode, all bits active
+    
+    // Set initial duty cycle to 0 (motor off)
+    CCPR1L = 0x00;
+    CCP1CONbits.DC1B = 0x00;
+}
+
+// Keypad Initialization
+void init_keypad(void) {
+    // Configure PORTB for keypad
+    TRISB = 0xF0;  // RB0-RB3 as outputs (rows), RB4-RB7 as inputs (columns)
+    LATB = 0x0F;   // Set rows high initially
+    
+    // Initialize column pins
+    ROW1 = ROW2 = ROW3 = ROW4 = 1;  // All rows high initially
+}
+
+// Interrupt Initialization
+void init_interrupt(void) {
+    // Configure PORTB change notification interrupt
+    INTCONbits.RBIE = 1;   // Enable PORTB change interrupt
+    INTCONbits.RBIF = 0;   // Clear PORTB interrupt flag
+    
+    // Enable global interrupts
+    INTCONbits.GIE = 1;    // Enable global interrupts
+}
+
+// LCD Initialization
+void init_lcd(void) {
+    // Configure LCD port pins
+    LCD_TRIS = 0x00;  // All LCD data pins as outputs
+    RS_TRIS = 0;      // RS pin as output
+    EN_TRIS = 0;      // EN pin as output
+    
+    // Power-on delay
+    __delay_ms(50);
+    
+    // Initialize LCD in 8-bit mode
+    lcd_command(0x38);  // 8-bit mode, 2 lines, 5x8 dots
+    __delay_ms(30);
+    lcd_command(0x0C);  // Display on, cursor off, blink off
+    __delay_ms(30);
+    lcd_command(0x01);  // Clear display
+    __delay_ms(30);
+    lcd_command(0x06);  // Entry mode: increment cursor, no display shift
+    __delay_ms(30);
+}
+
+// Send Command to LCD
+void lcd_command(unsigned char cmd) {
+    RS = 0;            // Command mode
+    LCD_PORT = cmd;    // Put command on data port
+    EN = 1;            // Enable pulse
+    __delay_ms(3);     // Wait
+    EN = 0;            // End enable pulse
+}
+
+// Send Data to LCD
+void lcd_data(unsigned char data) {
+    RS = 1;            // Data mode
+    LCD_PORT = data;   // Put data on data port
+    EN = 1;            // Enable pulse
+    __delay_ms(3);     // Wait
+    EN = 0;            // End enable pulse
+}
+
+// Print String on LCD
+void lcd_print(const char *str) {
+    while (*str) {
+        lcd_data(*str);
+        str++;
+    }
+}
+
+// Scan Keypad with improved reliability
+unsigned char scan_keypad(void) {
+    unsigned char key = 0;
+    
+    // Set all rows high first
+    ROW1 = ROW2 = ROW3 = ROW4 = 1;
+    __delay_ms(1);  // Small delay for signal stabilization
+    
+    // Scan first row
+    ROW1 = 0; ROW2 = 1; ROW3 = 1; ROW4 = 1;
+    __delay_ms(1);
+    if (!COL1) key = '1';
+    if (!COL2) key = '2';
+    if (!COL3) key = '3';
+    if (!COL4) key = 'A';
+    
+    if (key) goto keypad_done;  // If key found, exit
+    
+    // Scan second row
+    ROW1 = 1; ROW2 = 0; ROW3 = 1; ROW4 = 1;
+    __delay_ms(1);
+    if (!COL1) key = '4';
+    if (!COL2) key = '5';
+    if (!COL3) key = '6';
+    if (!COL4) key = 'B';
+    
+    if (key) goto keypad_done;  // If key found, exit
+    
+    // Scan third row
+    ROW1 = 1; ROW2 = 1; ROW3 = 0; ROW4 = 1;
+    __delay_ms(1);
+    if (!COL1) key = '7';
+    if (!COL2) key = '8';
+    if (!COL3) key = '9';
+    if (!COL4) key = 'C';
+    
+    if (key) goto keypad_done;  // If key found, exit
+    
+    // Scan fourth row
+    ROW1 = 1; ROW2 = 1; ROW3 = 1; ROW4 = 0;
+    __delay_ms(1);
+    if (!COL1) key = '*';
+    if (!COL2) key = '0';
+    if (!COL3) key = '#';
+    if (!COL4) key = 'D';
+
+keypad_done:
+    // Reset all rows to high
+    ROW1 = ROW2 = ROW3 = ROW4 = 1;
+    
+    return key;
+}
+
+// Update PWM Duty Cycle for 10-bit resolution
+void update_pwm(unsigned int duty) {
+    // Set the 10-bit PWM duty cycle
+    CCPR1L = (unsigned char)(duty >> 2);             // Upper 8 bits
+    CCP1CONbits.DC1B = (unsigned char)(duty & 0x03); // Lower 2 bits
+}
+
+// Interrupt Service Routine
+void __interrupt() isr(void) {
+    // Check if PORTB change interrupt
+    if (INTCONbits.RBIF) {
+        __delay_ms(10);  // Debounce delay
+        
+        unsigned char key = scan_keypad();
+        
+        // Process numerical keys (0-9) in interrupt
+        if (key >= '0' && key <= '9') {
+            // Calculate duty cycle: key '0' = 0%, '1' = 10%, '9' = 90%
+            unsigned int percentage = (key - '0') * 10;
+            
+            // Update duty cycle - direct mapping
+            duty_cycle = percentage;
+            
+            // Calculate 10-bit PWM value (0-1023)
+            unsigned int pwm_value = (percentage * 1023) / 100;
+            
+            // Update PWM
+            update_pwm(pwm_value);
+            
+            // Update LCD display
+            update_display(percentage);
+        }
+        
+        // Handle special case for 100% (using '*' key)
+        if (key == '*') {
+            duty_cycle = 100;
+            
+            // Set to 100% PWM value
+            update_pwm(1023);
+            
+            // Update LCD display
+            update_display(100);
+        }
+        
+        // Read PORTB to end mismatch condition
+        volatile unsigned char portb_read = PORTB;
+        
+        INTCONbits.RBIF = 0;  // Clear interrupt flag
+    }
+}

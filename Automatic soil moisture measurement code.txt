@@ -1,0 +1,108 @@
+#include <xc.h>
+#include <stdio.h>
+
+#define _XTAL_FREQ 4000000
+
+#define en PORTCbits.RC3
+#define rs PORTCbits.RC1
+#define relay PORTCbits.RC0
+
+char display[16];
+
+void lcd_string(char *s);
+void lcdinit(void);
+void lcdcmd(unsigned char data);
+void lcddata(unsigned char data);
+unsigned int readADC(void);
+
+void lcd_string(char *s)
+{
+    while(*s)
+    {
+        lcddata(*s++);
+    }
+}
+
+void lcdcmd(unsigned char data)
+{
+    PORTD = data;
+    rs = 0;
+    en = 1;
+    __delay_ms(1);
+    en = 0;
+}
+
+void lcddata(unsigned char data)
+{
+    PORTD = data;
+    rs = 1;
+    en = 1;
+    __delay_ms(1);
+    en = 0;
+}
+
+void lcdinit(void)
+{
+    lcdcmd(0x01);
+    __delay_ms(20);
+    lcdcmd(0x38);
+    lcdcmd(0x0C);
+    lcdcmd(0x06);
+    lcdcmd(0x80);
+}
+
+unsigned int readADC(void)
+{
+    ADCON0 = 0x01;     // Select channel AN0
+    __delay_us(30);
+    ADCON0bits.GO = 1; // Start conversion
+    while(ADCON0bits.DONE); 
+    return ((ADRESH << 8) | ADRESL);
+}
+
+void main(void)
+{
+    OSCCON = 0xEF;         // Internal oscillator 4MHz
+    ADCON0 = 0x01;         // Channel 0
+    ADCON1 = 0x07;         // Configure RA0 as analog
+    ADCON2 = 0xA4;         // Right justified result
+    TRISAbits.TRISA0 = 1;  // RA0 as input
+    TRISB = 0x00;
+    TRISC = 0x00;
+    TRISD = 0x00;
+
+    PORTC = 0x00;
+    PORTD = 0x00;
+    relay = 0;
+
+    lcdinit();
+    lcd_string("Soil Monitoring");
+    __delay_ms(2000);
+    
+    unsigned int moisture;
+
+    while(1)
+    {
+        lcdcmd(0x01);
+        lcdcmd(0x80);
+
+        moisture = readADC();
+
+        sprintf(display, "Moisture: %4d", moisture);
+        lcd_string(display);
+        lcdcmd(0xC0);
+
+        if(moisture < 500)  // Adjust threshold based on calibration
+        {
+            relay = 1;
+            lcd_string("Pump ON ");
+        }
+        else
+        {
+            relay = 0;
+            lcd_string("Pump OFF");
+        }
+
+        __delay_ms(2000);
+    }
+}
